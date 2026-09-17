@@ -2,7 +2,7 @@
 * @Author: kamalyes 501893067@qq.com
 * @Date: 2026-09-16 20:12:36
 * @LastEditors: kamalyes 501893067@qq.com
-* @LastEditTime: 2026-09-17 09:38:52
+* @LastEditTime: 2026-09-17 20:07:23
 * @FilePath: \go-bot\telegram\telegram.go
 * @Description: Telegram Bot API 适配器：通用消息到平台协议的翻译层
 *
@@ -158,11 +158,16 @@ func (a *Adapter) renderMentions(text string, msg *gobot.Message) string {
 	}
 	for _, id := range msg.AtUserIDs {
 		b.WriteString("\n")
-		if a.cfg.ParseMode == DefaultParseMode {
-			b.WriteString(`<a href="tg://user?id=` + id + `">@` + id + `</a>`)
-		} else {
-			b.WriteString("@" + id)
+		if a.cfg.ParseMode != DefaultParseMode {
+			b.WriteString("@")
+			b.WriteString(id)
+			continue
 		}
+		b.WriteString(`<a href="tg://user?id=`)
+		b.WriteString(id)
+		b.WriteString(`">@`)
+		b.WriteString(id)
+		b.WriteString(`</a>`)
 	}
 	return b.String()
 }
