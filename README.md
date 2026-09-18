@@ -4,7 +4,7 @@
 
 **多平台机器人消息 SDK**
 
-*一次接入，统一 API 发送 Telegram / Lark（飞书），重试、静音、统计等通用能力一次暴露，新平台即插即用*
+*一次接入，统一 API 发送 Telegram / Lark（飞书）/ 钉钉，重试、静音、统计等通用能力一次暴露，新平台即插即用*
 
 <br>
 
@@ -25,13 +25,10 @@
 ## ✨ 特性亮点
 
 - 🚀 **统一 API** - `bot.Send(ctx, msg, targets...)` 一套代码发送所有平台，单目标快路径、多目标并发扇出，新平台实现 `Adapter` SPI 即自动获得全部通用能力
-- 📦 **批量发送** - Send 原生接收多目标，告警群发并发受 `DefaultBatchConcurrency` 约束，结果按序返回、错误 `errors.Join` 聚合
-- 🔌 **平台即插即用** - `telegram/`（Bot API）与 `lark/`（自定义机器人 webhook）独立子包，引入哪个平台才有哪些依赖
-- 🔁 **自动重试** - go-toolbox/retry 驱动（指数退避 + jitter），仅重试可重试错误（429/5xx/平台限流码），尊重 Retry-After
-- 🛡️ **熔断保护** - 可选 go-toolbox/breaker，连续失败达到阈值后快速失败，避免对故障平台持续压测
+- 🔌 **平台即插即用** - `telegram/`（Bot API）、`lark/`、`dingtalk/`（自定义机器人 webhook）独立子包，引入哪个平台才有哪些依赖
+- 🔁 **自动重试与熔断** - 指数退避 + jitter，仅重试可重试错误（429/5xx/平台限流码），尊重 Retry-After；可选 breaker 连续失败快速熔断
 - 🔕 **运行期静音** - Switch 开关一键止言，静音丢弃不计入成功率
-- 📊 **双路统计** - 进程内 atomic 计数（sent/error/muted/成功率）始终可用，可选 ClickHouse 持久化每条发送事件
-- ⚡ **异步落盘** - ClickHouse 统计走 `syncx.BatchProcessor` 批量聚合，队列满即丢，绝不阻塞发送主流程
+- 📊 **双路统计** - 进程内 atomic 计数始终可用；可选 ClickHouse 走 `syncx.BatchProcessor` 批量异步落盘，队列满即丢绝不阻塞发送
 - ❌ **结构化错误** - `*gobot.Error` 五类 Kind（validation/transport/http/platform/decode）+ Retryable，无需匹配错误字符串
 - 🎯 **链式构造** - `gobot.Text("...").AtAll()` Builder 风格，对齐 go-logger / go-cachex 使用习惯
 - 📣 **多平台广播** - `NewMulti(bot1, bot2)` 跨平台 × 多目标并发扇出、聚合错误
@@ -54,6 +51,7 @@ graph TB
 
     C --> C1["telegram/<br/>Bot API"]
     C --> C2["lark/<br/>webhook 推送"]
+    C --> C3["dingtalk/<br/>webhook 推送"]
 
     D --> D1["Stats<br/>进程内 atomic"]
     D --> D2["metrics/clickhouse<br/>批量异步落盘"]
@@ -95,7 +93,6 @@ func main() {
     if err != nil {
         panic(err)
     }
-
     bot, err := gobot.NewBot(adapter).
         WithRetry(gobot.RetryPolicy{MaxRetries: 3, Jitter: true}).
         Build()
@@ -108,98 +105,82 @@ func main() {
     _, err = bot.Send(context.Background(), gobot.Text("部署完成 ✅").AtAll(),
         gobot.Chat("-1001234567890"))
 
-    // 发送 markdown 告警（@ 指定用户），同一接口批量发多个群
+    // 发送 markdown 告警（@ 指定用户），同一接口可继续追加多个群
     _, err = bot.Send(context.Background(),
         gobot.Markdown("告警", "**CPU 90%**").AtUsers("123456789"),
         gobot.Chat("-1001234567890"), gobot.Chat("-1009876543210"))
 }
 ```
 
-群组能力与事件接收（TG 特有）：
-
-```go
-// 拉取平台事件（长轮询），业务在 Event.Message.Text 匹配指令
-events, err := adapter.GetEvents(ctx, telegram.EventOptions{Timeout: 30})
-
-// 会话列表（从事件中自动积累）
-chats, err := adapter.ListChats(ctx)
-
-// 查询会话详情 / 退出会话
-chat, err := adapter.GetChat(ctx, "-1001234567890")
-err = adapter.LeaveChat(ctx, "-1001234567890")
-```
+TG 独有群组能力与事件接收见[生产级接入](#-生产级接入)。
 
 ### Lark（自定义机器人 webhook）
 
 ```go
 adapter, err := lark.New(lark.Config{
-    Token:  "webhook-token",           // 推送地址最后一段
-    Secret: "optional-sign-secret",   // 开启签名校验后必填，可省略
+    Token:  "webhook-token",          // 推送地址最后一段
+    Secret: "optional-sign-secret",  // 开启签名校验后必填，可省略
 })
-
+if err != nil {
+    panic(err)
+}
 bot, err := gobot.NewBot(adapter).Build()
 
 // webhook 固定投递到机器人所在会话，Target 不参与路由
-_, err = bot.Send(context.Background(), gobot.Markdown("告警", "**磁盘 95%**"), gobot.Chat(""))
+_, err = bot.Send(ctx, gobot.Markdown("告警", "**磁盘 95%**"), gobot.Chat(""))
+```
+
+### 钉钉（自定义机器人 webhook）
+
+```go
+adapter, err := dingtalk.New(dingtalk.Config{
+    Token:  "access_token",           // webhook 地址中的 access_token
+    Secret: "optional-sign-secret",  // 安全设置为加签时必填，可省略
+})
+if err != nil {
+    panic(err)
+}
+bot, err := gobot.NewBot(adapter).Build()
+
+_, err = bot.Send(ctx, gobot.Text("【生产发布通知】order-svc v2.6.0"), gobot.Chat(""))
+```
+
+markdown 消息中平台不支持的表格会自动降级为等宽对齐代码块（复用根包公共渲染，三平台呈现口径一致）。
+
+### 多平台广播
+
+```go
+multi, err := gobot.NewMulti(tgBot, larkBot, dingtalkBot)
+
+// 跨平台并发投递同一消息：结果 results[botIndex][targetIndex]，错误 errors.Join 聚合
+_, err = multi.Send(ctx, gobot.Text("全平台通知"), gobot.Chat("-1001234567890"))
 ```
 
 ### ClickHouse 统计（可选）
 
-gorm 连接由接入方自建并管理生命周期（clickhouse-go OpenDB 注入 gorm 驱动，与 dashboard 服务同一模式）：
+gorm 连接由接入方自建并管理生命周期（clickhouse-go OpenDB 注入 gorm 驱动）：
 
 ```go
-// 建连（接入方负责，连接池随 Options 生效）
-sqlDB := ch.OpenDB(&ch.Options{
-    Addr: []string{"127.0.0.1:9000"},
-    Auth: ch.Auth{Database: "default", Username: "default", Password: "secret"},
-})
+sqlDB := ch.OpenDB(&ch.Options{Addr: []string{"127.0.0.1:9000"}, /* Auth 等 */})
 db, err := gorm.Open(gormch.New(gormch.Config{Conn: sqlDB}), &gorm.Config{})
 if err != nil {
     panic(err)
 }
-
 chMetrics, err := clickhouse.New(db, clickhouse.Config{}) // 表名/批量参数可选
 if err != nil {
     panic(err)
 }
 defer chMetrics.Stop() // 落盘剩余事件；连接池归接入方管理
 
-bot, err := gobot.NewBot(adapter).
-    WithMetrics(chMetrics). // 不配则无持久化统计
-    Build()
-
-// 进程内统计始终可用
-fmt.Println(bot.Stats().SuccessRate())
+bot, err := gobot.NewBot(adapter).WithMetrics(chMetrics).Build()
+fmt.Println(bot.Stats().SuccessRate()) // 进程内统计始终可用
 ```
 
-统计事件批量异步写入 `bot_send_events` 表（建表语句见 `metrics/clickhouse/schema.sql`），常用查询：
-
-```sql
--- 发送量
-SELECT platform, count() FROM bot_send_events GROUP BY platform;
--- 成功率
-SELECT platform, sum(success) / count() FROM bot_send_events GROUP BY platform;
-```
-
-### 多平台广播与批量发送
-
-```go
-multi, err := gobot.NewMulti(tgBot, larkBot)
-
-// 跨平台通知：两个平台并发投递同一消息
-// 结果是二维切片 results[botIndex][targetIndex]，失败位置为 nil
-_, err = multi.Send(ctx, gobot.Text("全平台通知"), gobot.Chat("-1001234567890"))
-
-// 跨平台批量告警：平台间并发 × 平台内多目标并发
-_, err = multi.Send(ctx, gobot.Markdown("告警", "**CPU 92%**"),
-    gobot.Chat("-1001111111111"), gobot.Chat("-1002222222222"))
-```
-
-多目标时每个目标独立走完整流水线（校验/静音/重试/统计），在途请求受 `DefaultBatchConcurrency` 约束，限流退避交给重试链消化；结果按目标顺序返回，错误用 `errors.Join` 聚合。
+统计事件批量异步写入 `bot_send_events` 表，建表语句与常用查询见 [schema.sql](metrics/clickhouse/schema.sql)。
 
 ## 🏭 生产级接入
 
-单条 Send 只是能力底座，生产接入需要组合多平台、批量扇出、事件接收、静音联动、持久化统计与优雅关闭。以下是一个可直接落地的完整骨架：
+多平台组合、批量扇出、事件接收、静音联动与优雅关闭的完整骨架：
 
 ```go
 package main
@@ -234,12 +215,11 @@ func main() {
     // 2. 运行期静音：一个开关同时止言所有平台，告警风暴时一键降噪
     mute := gobot.NewSwitch()
 
-    // 3. 组装 Bot：重试消化 429/5xx；需要持久化统计时
-    //    按「ClickHouse 统计」小节建连并追加 WithMetrics(chMetrics)
+    // 3. 组装 Bot；需要持久化统计时按「ClickHouse 统计」追加 WithMetrics
     newBot := func(a gobot.Adapter, name string) *gobot.Bot {
         bot, err := gobot.NewBot(a).
-            WithName(name).                                       // 统计维度区分平台实例
-            WithSwitch(mute).                                     // 联动静音
+            WithName(name).
+            WithSwitch(mute).
             WithRetry(gobot.RetryPolicy{MaxRetries: 3, Jitter: true}).
             Build()
         if err != nil {
@@ -254,7 +234,7 @@ func main() {
         panic(err)
     }
 
-    // 4. 批量告警：巡检异常一次扇出到所有平台的全部告警群
+    // 4. 定时巡检：一次扇出到所有平台的全部告警群
     go func() {
         ticker := time.NewTicker(time.Minute)
         defer ticker.Stop()
@@ -268,14 +248,12 @@ func main() {
                     gobot.Chat("-1001111111111"), gobot.Chat("-1002222222222")); err != nil {
                     fmt.Fprintln(os.Stderr, "broadcast:", err)
                 }
-                fmt.Printf("tg sent=%d error=%d rate=%.2f\n",
-                    tgBot.Stats().TotalSent(), tgBot.Stats().TotalError(),
-                    tgBot.Stats().SuccessRate())
             }
         }
     }()
 
-    // 5. TG 事件接收：长轮询收群消息，会话自动积累进 ListChats
+    // 5. TG 事件接收：长轮询收群消息，会话自动积累进 ListChats，
+    //    业务语义（绑定/解绑/订阅码）在这里实现
     go func() {
         for ctx.Err() == nil {
             events, err := tg.GetEvents(ctx, telegram.EventOptions{Timeout: 30})
@@ -286,15 +264,13 @@ func main() {
                 if ev.Message == nil {
                     continue
                 }
-                // 业务语义（绑定/解绑/订阅码）在这里实现
                 _, _ = tgBot.SendText(ctx, "echo: "+ev.Message.Text,
                     gobot.Chat(ev.Message.Chat.ID))
             }
         }
     }()
 
-    // 6. 优雅关闭：停掉调度与轮询后，限时释放 adapter
-    //    （WithMetrics 时先 chMetrics.Stop() 落盘剩余事件再 Close）
+    // 6. 优雅关闭：停调度/轮询后限时释放（WithMetrics 时先 Stop() 落盘）
     <-ctx.Done()
     shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
     defer cancel()
@@ -307,7 +283,7 @@ func main() {
 
 | 关注点 | 做法 |
 |--------|------|
-| 限流 | TG 429/Retry-After 与 Lark 11232 均转可重试错误，重试链指数退避消化；批量并发受 `DefaultBatchConcurrency` 约束 |
+| 限流 | TG 429/Retry-After 与 Lark 11232 均转可重试错误，重试链指数退避消化；钉钉限流（20 条/分钟、超限封禁 10 分钟）不可重试 |
 | 告警风暴 | 全平台共享一个 `Switch`，`Disable()` 一键止言、`Enable()` 恢复；muted 单独计数不污染成功率 |
 | 统计观测 | 进程内 `Stats()` 常开；`WithMetrics` 接 ClickHouse 后按 `bot_send_events` 聚合发送量/成功率 |
 | 落盘健康 | `chMetrics.FailedBatches()` 暴露被丢弃的批量，接入方对其监控告警 |
@@ -344,6 +320,7 @@ func main() {
 | 🔌 Adapter SPI | [adapter.go](adapter.go) | Platform / Send / Close 三方法契约 | 新平台接入 |
 | 📨 消息模型 | [message.go](message.go) | Text/Markdown/Image + @ 提及 | 消息构造 |
 | 🎯 发送目标 | [target.go](target.go) | Target{ID, Type(user/chat)} | 目标路由 |
+| 📐 markdown 表格渲染 | [markdown.go](markdown.go) | 表格识别与显示宽度等宽对齐（各平台共用） | 表格降级 |
 | ⚙️ 常量 | [constants.go](constants.go) | 平台标识、默认超时/退避 | 默认值 |
 | ❌ 错误体系 | [errors.go](errors.go) | 结构化 *Error（Kind + Retryable） | 错误分支处理 |
 | 🔁 重试 | [retry.go](retry.go) | 指数退避 + Retry-After 尊重 + jitter | 失败恢复 |
@@ -359,6 +336,7 @@ func main() {
 | [telegram.go](telegram/telegram.go) | 构造与配置（Config/Adapter/New） |
 | [send.go](telegram/send.go) | 发送（sendMessage/sendPhoto） |
 | [payload.go](telegram/payload.go) | 消息体渲染（text/markdown/@ 提及，HTML 转义） |
+| [markdown.go](telegram/markdown.go) | 通用 markdown 转 Telegram HTML 子集 |
 | [api.go](telegram/api.go) | HTTP 基础设施（callAPI 泛型调用、429 退避、可重试判定） |
 | [chat.go](telegram/chat.go) | 群组能力（ListChats/GetChat/LeaveChat，会话自动积累） |
 | [events.go](telegram/events.go) | 事件接收（GetEvents 长轮询 + Event/ChatMessage 模型） |
@@ -371,6 +349,17 @@ func main() {
 | [send.go](lark/send.go) | webhook 推送与响应解码 |
 | [sign.go](lark/sign.go) | 请求签名（HMAC-SHA256） |
 | [payload.go](lark/payload.go) | 消息体构造（@ 提及渲染 + markdown 卡片组装） |
+| [markdown.go](lark/markdown.go) | 通用 markdown 到卡片富文本子集的降级转换 |
+
+### dingtalk/
+
+| 文件 | 功能描述 |
+|------|----------|
+| [dingtalk.go](dingtalk/dingtalk.go) | 构造与配置（Config/Adapter/New） |
+| [send.go](dingtalk/send.go) | webhook 推送（access_token/加签 query 携带）与响应解码 |
+| [sign.go](dingtalk/sign.go) | 请求加签（毫秒时间戳 + HMAC-SHA256 + URL 编码） |
+| [payload.go](dingtalk/payload.go) | 消息体构造（@ 字段映射、title 兜底） |
+| [markdown.go](dingtalk/markdown.go) | 通用 markdown 到钉钉语法子集的降级转换 |
 
 ### metrics/clickhouse/
 
@@ -382,19 +371,19 @@ func main() {
 
 ## 📊 平台适配对照
 
-| | telegram/ | lark/ |
-| --- | --- | --- |
-| 形态 | Bot API（长轮询） | 自定义机器人 webhook 推送 |
-| 凭据 | Bot Token | webhook Token + 可选签名 Secret |
-| text | sendMessage | `msg_type=text` 直发 |
-| markdown | sendMessage（parse_mode 可配） | interactive 卡片 + markdown 元素 |
-| image | sendPhoto(URL) | 不支持（返回校验错误） |
-| @ 提及 | `tg://user?id=`（HTML 转义） | `<at user_id=...></at>`（all 为保留字） |
-| 限流响应 | 429 + retry_after | 业务码 11232，转 Retryable |
-| 路由 | 按 Target.ID 投递 | 固定投递机器人所在会话 |
-| 群组能力 | ListChats / GetChat / LeaveChat | 无 |
-| 事件 | GetEvents 长轮询 | 无（单向推送） |
-| 约束 | bot 无法主动加群，只能被拉入 | 请求体上限 20KB（本地拦截）、签名 1 小时内有效 |
+| | telegram/ | lark/ | dingtalk/ |
+| --- | --- | --- | --- |
+| 形态 | Bot API（长轮询） | 自定义机器人 webhook | 自定义机器人 webhook |
+| 凭据 | Bot Token | webhook Token + 可选签名 Secret | access_token + 可选加签 Secret |
+| text | sendMessage | `msg_type=text` 直发 | `msgtype=text` 直发 |
+| markdown | sendMessage（parse_mode 可配） | interactive 卡片（标题/表格降级） | `msgtype=markdown`（表格降级对齐代码块） |
+| image | sendPhoto(URL) | 不支持（返回校验错误） | 不支持（返回校验错误） |
+| @ 提及 | `tg://user?id=`（HTML 转义） | `<at user_id=...></at>`（all 为保留字） | `atUserIds` / `isAtAll` |
+| 限流响应 | 429 + retry_after | 业务码 11232，转 Retryable | 20 条/分钟超限封禁 10 分钟，不可重试 |
+| 路由 | 按 Target.ID 投递 | 固定投递机器人所在会话 | 固定投递机器人所在群 |
+| 群组能力 | ListChats / GetChat / LeaveChat | 无 | 无 |
+| 事件 | GetEvents 长轮询 | 无（单向推送） | 无（单向推送） |
+| 约束 | bot 无法主动加群，只能被拉入 | 请求体上限 20KB（本地拦截）、签名 1 小时内有效 | 请求体上限 20KB（本地拦截）、安全设置关键词/IP 白名单由平台校验 |
 
 > 💡 后续接入腾讯系（企业微信等）：新增 `wecom/` 子包实现 Adapter 即可，核心不动
 
