@@ -71,6 +71,21 @@ func TestSendTextSuccess(t *testing.T) {
 	}
 }
 
+// TestSendContentType 验证请求显式携带 Content-Type（钉钉强校验，缺失返回 errcode 43004）
+func TestSendContentType(t *testing.T) {
+	var gotContentType string
+	adapter := newTestAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		_, _ = w.Write([]byte(`{"errcode":0,"errmsg":"ok"}`))
+	})
+	if _, err := adapter.Send(context.Background(), gobot.Chat(""), gobot.Text("hi")); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if gotContentType != "application/json" {
+		t.Fatalf("Content-Type = %q, 期望 application/json", gotContentType)
+	}
+}
+
 // TestSendMarkdownSuccess 验证 markdown 消息降级组装与 title 映射
 func TestSendMarkdownSuccess(t *testing.T) {
 	var payload map[string]any

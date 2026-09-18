@@ -18,6 +18,7 @@ import (
 	"time"
 
 	gobot "github.com/kamalyes/go-bot"
+	"github.com/kamalyes/go-toolbox/pkg/httpx"
 )
 
 // Send 实现 gobot.Adapter：text 直发、markdown 降级后发送；
@@ -48,8 +49,10 @@ func (a *Adapter) Send(ctx context.Context, _ gobot.Target, msg *gobot.Message) 
 		query.Set("timestamp", timestamp)
 		query.Set("sign", signature)
 	}
+	// 钉钉强校验 Content-Type 为 application/json，缺失时返回 errcode 43004
 	resp, err := a.client.Post(a.cfg.APIBase + webhookPath + "?" + query.Encode()).
 		WithContext(ctx).
+		SetContentType(httpx.ContentTypeApplicationJSON).
 		SetBodyRaw(data).
 		Send()
 	if err != nil {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	gobot "github.com/kamalyes/go-bot"
+	"github.com/kamalyes/go-toolbox/pkg/httpx"
 )
 
 // Send 实现 gobot.Adapter：text 直发、markdown 组装 interactive 卡片；
@@ -50,6 +51,7 @@ func (a *Adapter) Send(ctx context.Context, _ gobot.Target, msg *gobot.Message) 
 	}
 	resp, err := a.client.Post(a.cfg.APIBase + webhookPathPrefix + a.cfg.Token).
 		WithContext(ctx).
+		SetContentType(httpx.ContentTypeApplicationJSON).
 		SetBodyRaw(data).
 		Send()
 	if err != nil {

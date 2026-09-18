@@ -80,6 +80,21 @@ func TestSendTextSuccess(t *testing.T) {
 	}
 }
 
+// TestSendContentType 验证请求显式携带 Content-Type（与 telegram 的 SetBodyJSON 行为对齐）
+func TestSendContentType(t *testing.T) {
+	var gotContentType string
+	adapter := newTestAdapter(t, func(w http.ResponseWriter, r *http.Request) {
+		gotContentType = r.Header.Get("Content-Type")
+		_, _ = w.Write([]byte(`{"code":0}`))
+	})
+	if _, err := adapter.Send(context.Background(), gobot.Chat(""), gobot.Text("hi")); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if gotContentType != "application/json" {
+		t.Fatalf("Content-Type = %q, 期望 application/json", gotContentType)
+	}
+}
+
 // TestSendMarkdownSuccess 验证 markdown 消息组装为 interactive 卡片
 func TestSendMarkdownSuccess(t *testing.T) {
 	var payload map[string]any
