@@ -144,17 +144,24 @@ _, err = bot.Send(context.Background(), gobot.Chat(""),
 
 ### ClickHouse 统计（可选）
 
+gorm 连接由接入方自建并管理生命周期（clickhouse-go OpenDB 注入 gorm 驱动，与 dashboard 服务同一模式）：
+
 ```go
-chMetrics, err := clickhouse.New(clickhouse.Config{
-    Addr:     []string{"127.0.0.1:9000"},
-    Database: "default",
-    Username: "default",
-    Password: "secret",
+// 建连（接入方负责，连接池随 Options 生效）
+sqlDB := ch.OpenDB(&ch.Options{
+    Addr: []string{"127.0.0.1:9000"},
+    Auth: ch.Auth{Database: "default", Username: "default", Password: "secret"},
 })
+db, err := gorm.Open(gormch.New(gormch.Config{Conn: sqlDB}), &gorm.Config{})
 if err != nil {
     panic(err)
 }
-defer chMetrics.Close() // 落盘剩余事件并关闭连接池
+
+chMetrics, err := clickhouse.New(db, clickhouse.Config{}) // 表名/批量参数可选
+if err != nil {
+    panic(err)
+}
+defer chMetrics.Stop() // 落盘剩余事件；连接池归接入方管理
 
 bot, err := gobot.NewBot(adapter).
     WithMetrics(chMetrics). // 不配则无持久化统计
@@ -243,8 +250,7 @@ _, err = multi.Send(ctx, target, gobot.Text("全平台通知"))
 
 | 文件 | 功能描述 |
 |------|----------|
-| [clickhouse.go](metrics/clickhouse/clickhouse.go) | 构造与配置（BatchProcessor 驱动异步批量） |
-| [conn.go](metrics/clickhouse/conn.go) | 连接池（clickhouse-go OpenDB 注入 gorm 驱动，LZ4 + UTC 会话时区） |
+| [clickhouse.go](metrics/clickhouse/clickhouse.go) | 构造与配置（注入接入方 gorm 连接，BatchProcessor 驱动异步批量） |
 | [insert.go](metrics/clickhouse/insert.go) | 批量写入（参数化 INSERT VALUES） |
 | [schema.sql](metrics/clickhouse/schema.sql) | bot_send_events 建表语句 |
 
