@@ -2,7 +2,7 @@
 * @Author: kamalyes 501893067@qq.com
 * @Date: 2026-09-15 08:23:17
 * @LastEditors: kamalyes 501893067@qq.com
-* @LastEditTime: 2026-09-18 21:02:18
+* @LastEditTime: 2026-09-18 22:56:36
 * @FilePath: \go-bot\constants.go
 * @Description: 平台常量与默认值定义
 *
@@ -10,7 +10,7 @@
  */
 
 // Package gobot 提供统一的多平台机器人消息发送能力，
-// 支持 Telegram 与 Lark（飞书），并可通过实现 Adapter 接入更多平台
+// 支持 Telegram、Lark（飞书）与钉钉，并可通过实现 Adapter 接入更多平台
 // 所有暴露能力均为平台无关的通用 API；Bot 可安全并发使用
 package gobot
 
@@ -24,6 +24,8 @@ const (
 	PlatformTelegram Platform = "telegram"
 	// PlatformLark 标识 lark 包提供的 Lark（飞书）应用机器人适配器
 	PlatformLark Platform = "lark"
+	// PlatformDingtalk 标识 dingtalk 包提供的钉钉自定义机器人适配器
+	PlatformDingtalk Platform = "dingtalk"
 )
 
 const (
