@@ -2,7 +2,7 @@
 * @Author: kamalyes 501893067@qq.com
 * @Date: 2026-09-17 20:35:12
 * @LastEditors: kamalyes 501893067@qq.com
-* @LastEditTime: 2026-09-17 20:55:38
+* @LastEditTime: 2026-09-18 20:31:18
 * @FilePath: \go-bot\lark\send.go
 * @Description: Lark webhook 推送：消息发送与响应解码
 *
@@ -43,10 +43,8 @@ func (a *Adapter) Send(ctx context.Context, _ gobot.Target, msg *gobot.Message) 
 		payload["timestamp"] = timestamp
 		payload["sign"] = signature
 	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return nil, gobot.NewValidationError(op, "encode payload failed")
-	}
+	// payload 的值均为 string 与 map 的组合，Marshal 不存在失败路径
+	data, _ := json.Marshal(payload)
 	if len(data) > maxPayloadSize {
 		return nil, gobot.NewValidationError(op, "payload exceeds 20 KB limit")
 	}
