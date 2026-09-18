@@ -47,6 +47,9 @@ const (
 	// DefaultBatchConcurrency 是 SendBatch 批量发送的并发上限
 	// 一次向大量目标投递时限制在途请求数，限流交给重试链消化
 	DefaultBatchConcurrency = 8
+	// DefaultQueueInterval 是 QueuedBot 消费端的默认投递间隔
+	// （削峰节奏）；平台限流更严时按量调宽，如钉钉 20 条/分钟对应 3s
+	DefaultQueueInterval = time.Second
 )
 
 // GetDefaultHTTPTimeout 等默认值以函数形式暴露，便于测试与运行期统一调整
