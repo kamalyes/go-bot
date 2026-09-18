@@ -43,13 +43,13 @@ type ChatMessage struct {
 // User 是消息发送者的公开信息
 type User struct {
 	// ID 是发送者的数值 user id，@ 提及时对应 gobot.Message.AtUserIDs 的字符串形态
-	ID int64
+	ID int64 `json:"id"`
 	// FirstName 是名字
-	FirstName string
+	FirstName string `json:"first_name"`
 	// LastName 是姓氏，可为空
-	LastName string
+	LastName string `json:"last_name"`
 	// Username 是公开用户名，可为空
-	Username string
+	Username string `json:"username"`
 }
 
 // EventOptions 控制一次事件拉取的行为
