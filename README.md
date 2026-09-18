@@ -4,7 +4,7 @@
 
 **多平台机器人消息 SDK**
 
-*一次接入，统一 API 发送 Telegram / Lark（飞书）/ 钉钉 / Server酱，重试、静音、统计等通用能力一次暴露，新平台即插即用*
+*一次接入，统一 API 发送 Telegram / Lark（飞书）/ 钉钉 / 企业微信 / Server酱，重试、静音、统计等通用能力一次暴露，新平台即插即用*
 
 <br>
 
@@ -25,7 +25,7 @@
 ## ✨ 特性亮点
 
 - 🚀 **统一 API** - `bot.Send(ctx, msg, targets...)` 一套代码发送所有平台，单目标快路径、多目标并发扇出，新平台实现 `Adapter` SPI 即自动获得全部通用能力
-- 🔌 **平台即插即用** - `telegram/`（Bot API）、`lark/`、`dingtalk/`、`serverchan/`（个人推送）独立子包，引入哪个平台才有哪些依赖
+- 🔌 **平台即插即用** - `telegram/`（Bot API）、`lark/`、`dingtalk/`、`wecom/`（机器人 webhook）、`serverchan/`（个人推送）独立子包，引入哪个平台才有哪些依赖
 - 🔁 **自动重试与熔断** - 指数退避 + jitter，仅重试可重试错误（429/5xx/平台限流码），尊重 Retry-After；可选 breaker 连续失败快速熔断
 - 🔕 **运行期静音** - Switch 开关一键止言，静音丢弃不计入成功率
 - 📊 **双路统计** - 进程内 atomic 计数始终可用；可选 ClickHouse 走 `syncx.BatchProcessor` 批量异步落盘，队列满即丢绝不阻塞发送
@@ -53,7 +53,8 @@ graph TB
     C --> C1["telegram/<br/>Bot API"]
     C --> C2["lark/<br/>webhook 推送"]
     C --> C3["dingtalk/<br/>webhook 推送"]
-    C --> C4["serverchan/<br/>个人推送"]
+    C --> C4["wecom/<br/>webhook 推送"]
+    C --> C5["serverchan/<br/>个人推送"]
 
     D --> D1["Stats<br/>进程内 atomic"]
     D --> D2["metrics/clickhouse<br/>批量异步落盘"]
@@ -147,7 +148,27 @@ bot, err := gobot.NewBot(adapter).Build()
 _, err = bot.Send(ctx, gobot.Text("【生产发布通知】order-svc v2.6.0"), gobot.Chat(""))
 ```
 
-markdown 消息中平台不支持的表格会自动降级为等宽对齐代码块（复用根包公共渲染，三平台呈现口径一致）。
+markdown 消息中平台不支持的表格会自动降级为等宽对齐呈现（复用根包公共渲染，各平台呈现口径一致）。
+
+### 企业微信（群机器人 webhook）
+
+```go
+adapter, err := wecom.New(wecom.Config{
+    Key: "webhook-key",            // webhook 地址中的 key 参数
+})
+if err != nil {
+    panic(err)
+}
+bot, err := gobot.NewBot(adapter).Build()
+
+// text 支持 @（mentioned_list，@ 全员为 @all）；markdown 类型平台不支持 @，携带时返回校验错误
+_, err = bot.Send(ctx, gobot.Text("【生产发布通知】order-svc v2.6.0").AtAll(), gobot.Chat(""))
+
+// 图片自动下载转 base64+md5 投递（平台 webhook 仅接受二进制形态）
+_, err = bot.Send(ctx, gobot.Image("https://example.com/chart.png"), gobot.Chat(""))
+```
+
+markdown 消息中平台不支持的表格与代码块会降级为对齐行与去围栏内容（复用根包公共渲染）。
 
 ### Server酱（个人微信推送）
 
@@ -333,7 +354,7 @@ func main() {
 
 | 关注点 | 做法 |
 |--------|------|
-| 限流 | TG 429/Retry-After 与 Lark 11232 均转可重试错误，重试链指数退避消化；钉钉限流（20 条/分钟、超限封禁 10 分钟）与 Server酱免费额度（每日 5 条）均不可重试 |
+| 限流 | TG 429/Retry-After 与 Lark 11232 均转可重试错误，重试链指数退避消化；钉钉/企微限流（20 条/分钟、超限封禁 10 分钟）与 Server酱免费额度（每日 5 条）均不可重试 |
 | 告警风暴 | 全平台共享一个 `Switch`，`Disable()` 一键止言、`Enable()` 恢复；muted 单独计数不污染成功率 |
 | 突发流量 | `NewQueuedBot` 入队直返 + `WithInterval` 节流排干，队列适配器多实例负载均衡（见「削峰填谷」） |
 | 统计观测 | 进程内 `Stats()` 常开；`WithMetrics` 接 ClickHouse 后按 `bot_send_events` 聚合发送量/成功率 |
@@ -420,6 +441,15 @@ func main() {
 | [payload.go](dingtalk/payload.go) | 消息体构造（@ 字段映射、title 兜底） |
 | [markdown.go](dingtalk/markdown.go) | 通用 markdown 到钉钉语法子集的降级转换 |
 
+### wecom/
+
+| 文件 | 功能描述 |
+|------|----------|
+| [wecom.go](wecom/wecom.go) | 构造与配置（Config/Adapter/New + 平台字节上限） |
+| [send.go](wecom/send.go) | webhook 推送（key query 携带）与响应解码 |
+| [payload.go](wecom/payload.go) | 消息体构造（mentioned_list 映射、图片下载转 base64+md5） |
+| [markdown.go](wecom/markdown.go) | 通用 markdown 到企微语法子集的降级转换（表格/代码块） |
+
 ### serverchan/
 
 | 文件 | 功能描述 |
@@ -438,21 +468,21 @@ func main() {
 
 ## 📊 平台适配对照
 
-| | telegram/ | lark/ | dingtalk/ | serverchan/ |
-| --- | --- | --- | --- | --- |
-| 形态 | Bot API（长轮询） | 自定义机器人 webhook | 自定义机器人 webhook | 个人推送（Server酱） |
-| 凭据 | Bot Token | webhook Token + 可选签名 Secret | access_token + 可选加签 Secret | SendKey |
-| text | sendMessage | `msg_type=text` 直发 | `msgtype=text` 直发 | 表单 title + desp |
-| markdown | sendMessage（parse_mode 可配） | interactive 卡片（标题/表格降级） | `msgtype=markdown`（表格降级对齐代码块） | desp 原生 markdown 直发 |
-| image | sendPhoto(URL) | 不支持（返回校验错误） | 不支持（返回校验错误） | 不支持（返回校验错误） |
-| @ 提及 | `tg://user?id=`（HTML 转义） | `<at user_id=...></at>`（all 为保留字） | `atUserIds` / `isAtAll` | 不支持（返回校验错误） |
-| 限流响应 | 429 + retry_after | 业务码 11232，转 Retryable | 20 条/分钟超限封禁 10 分钟，不可重试 | 免费额度每日 5 条，不可重试 |
-| 路由 | 按 Target.ID 投递 | 固定投递机器人所在会话 | 固定投递机器人所在群 | 固定投递 SendKey 绑定者 |
-| 群组能力 | ListChats / GetChat / LeaveChat | 无 | 无 | 无 |
-| 事件 | GetEvents 长轮询 | 无（单向推送） | 无（单向推送） | 无（单向推送） |
-| 约束 | bot 无法主动加群，只能被拉入 | 请求体上限 20KB（本地拦截）、签名 1 小时内有效 | 请求体上限 20KB（本地拦截）、安全设置关键词/IP 白名单由平台校验 | 表单提交、无 @ 概念，超长内容由平台截断 |
+| | telegram/ | lark/ | dingtalk/ | wecom/ | serverchan/ |
+| --- | --- | --- | --- | --- | --- |
+| 形态 | Bot API（长轮询） | 自定义机器人 webhook | 自定义机器人 webhook | 群机器人 webhook | 个人推送（Server酱） |
+| 凭据 | Bot Token | webhook Token + 可选签名 Secret | access_token + 可选加签 Secret | webhook Key | SendKey |
+| text | sendMessage | `msg_type=text` 直发 | `msgtype=text` 直发 | `msgtype=text` 直发 | 表单 title + desp |
+| markdown | sendMessage（parse_mode 可配） | interactive 卡片（标题/表格降级） | `msgtype=markdown`（表格降级对齐代码块） | `msgtype=markdown`（表格/代码块降级） | desp 原生 markdown 直发 |
+| image | sendPhoto(URL) | 不支持（返回校验错误） | 不支持（返回校验错误） | 下载转 base64+md5 投递 | 不支持（返回校验错误） |
+| @ 提及 | `tg://user?id=`（HTML 转义） | `<at user_id=...></at>`（all 为保留字） | `atUserIds` / `isAtAll` | `mentioned_list`（@all 为保留字；markdown 不支持） | 不支持（返回校验错误） |
+| 限流响应 | 429 + retry_after | 业务码 11232，转 Retryable | 20 条/分钟超限封禁 10 分钟，不可重试 | 20 条/分钟超限封禁 10 分钟，不可重试 | 免费额度每日 5 条，不可重试 |
+| 路由 | 按 Target.ID 投递 | 固定投递机器人所在会话 | 固定投递机器人所在群 | 固定投递机器人所在群 | 固定投递 SendKey 绑定者 |
+| 群组能力 | ListChats / GetChat / LeaveChat | 无 | 无 | 无 | 无 |
+| 事件 | GetEvents 长轮询 | 无（单向推送） | 无（单向推送） | 无（单向推送） | 无（单向推送） |
+| 约束 | bot 无法主动加群，只能被拉入 | 请求体上限 20KB（本地拦截）、签名 1 小时内有效 | 请求体上限 20KB（本地拦截）、安全设置关键词/IP 白名单由平台校验 | text 2048B / markdown 4096B / 图片 base64 2MB（均本地拦截） | 表单提交、无 @ 概念，超长内容由平台截断 |
 
-> 💡 后续接入腾讯系（企业微信等）：新增 `wecom/` 子包实现 Adapter 即可，核心不动
+> 💡 新平台接入：实现 `Adapter` SPI 三方法即可，核心不动（`wecom/`、`serverchan/` 即最简范例）
 
 ## 🧪 测试
 
