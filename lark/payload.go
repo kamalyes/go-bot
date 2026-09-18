@@ -2,7 +2,7 @@
 * @Author: kamalyes 501893067@qq.com
 * @Date: 2026-09-17 15:21:53
 * @LastEditors: kamalyes 501893067@qq.com
-* @LastEditTime: 2026-09-17 20:26:38
+* @LastEditTime: 2026-09-18 22:18:31
 * @FilePath: \go-bot\lark\payload.go
 * @Description: Lark 消息体构造：@ 提及渲染与 markdown 卡片组装
 *
@@ -37,11 +37,12 @@ func renderMentions(text string, msg *gobot.Message) string {
 }
 
 // markdownCard 把 markdown 消息组装为 interactive 卡片：
-// 标题进卡片 header（仅非空时），正文进 markdown 元素，@ 提及追加在正文尾部
+// 正文先降级为卡片富文本子集，标题进卡片 header（仅非空时），
+// @ 提及追加在正文尾部
 func markdownCard(msg *gobot.Message) map[string]any {
 	card := map[string]any{
 		"elements": []any{
-			map[string]any{"tag": "markdown", "content": renderMentions(msg.Text, msg)},
+			map[string]any{"tag": "markdown", "content": renderMentions(markdownToCardMarkdown(msg.Text), msg)},
 		},
 	}
 	if msg.Title != "" {
