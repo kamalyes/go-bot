@@ -32,6 +32,7 @@
 - ❌ **结构化错误** - `*gobot.Error` 五类 Kind（validation/transport/http/platform/decode）+ Retryable，无需匹配错误字符串
 - 🎯 **链式构造** - `gobot.Text("...").AtAll()` Builder 风格，对齐 go-logger / go-cachex 使用习惯
 - 📣 **多平台广播** - `NewMulti(bot1, bot2)` 跨平台 × 多目标并发扇出、聚合错误
+- 🌊 **削峰填谷** - `NewQueuedBot(bot, queue)` 入队直返、按 `Interval` 节流消费，配 [go-bot-queue-redis](https://github.com/kamalyes/go-bot-queue-redis) / [go-bot-queue-nats](https://github.com/kamalyes/go-bot-queue-nats) 独立队列库实现多实例负载均衡
 - 💬 **TG 群组能力** - `ListChats` / `GetChat` / `LeaveChat` 群管理基础能力，`GetEvents` 长轮询收事件
 - 🧱 **业务与 SDK 分离** - 只提供平台基础能力，绑定/解绑/订阅等业务语义由调用方实现
 
@@ -178,6 +179,39 @@ fmt.Println(bot.Stats().SuccessRate()) // 进程内统计始终可用
 
 统计事件批量异步写入 `bot_send_events` 表，建表语句与常用查询见 [schema.sql](metrics/clickhouse/schema.sql)。
 
+### 削峰填谷（可选）
+
+突发告警瞬间入队直返，消费循环按节奏排干队列，不打爆平台限流（如钉钉 20 条/分钟）。队列适配器是独立仓库，引入哪个才有哪个依赖：
+
+```go
+// 二选一：
+// go get github.com/kamalyes/go-bot-queue-redis   （Redis Stream）
+// go get github.com/kamalyes/go-bot-queue-nats    （NATS JetStream）
+q, err := queue.New(queue.Config{Addr: "127.0.0.1:6379"})        // redis
+// q, err := queue.New(queue.Config{URL: "nats://127.0.0.1:4222"}) // nats
+if err != nil {
+    panic(err)
+}
+defer q.Close(ctx)
+
+qb, err := gobot.NewQueuedBot(bot, q).
+    WithInterval(3 * time.Second). // 削峰节奏：钉钉 20 条/分钟对应 3s
+    Build()
+if err != nil {
+    panic(err)
+}
+
+// 生产端：入队直返（返回 nil 仅代表已入队）；多目标自动按目标粒度拆分任务
+_, _ = qb.Send(ctx, gobot.Text("【告警】CPU 92%"), gobot.Chat("-1001234567890"))
+
+// 消费端：常驻进程按节奏真实投递，静音/重试/熔断/统计全链路生效
+if err := qb.Run(ctx); err != nil {
+    panic(err)
+}
+```
+
+多实例部署共享同一队列，一条任务只被一个实例投递，实例崩溃后未确认任务自动转移；单实例 `Interval` 限制单实例速率，集群总吞吐 = 实例数 × 单实例速率。
+
 ## 🏭 生产级接入
 
 多平台组合、批量扇出、事件接收、静音联动与优雅关闭的完整骨架：
@@ -285,6 +319,7 @@ func main() {
 |--------|------|
 | 限流 | TG 429/Retry-After 与 Lark 11232 均转可重试错误，重试链指数退避消化；钉钉限流（20 条/分钟、超限封禁 10 分钟）不可重试 |
 | 告警风暴 | 全平台共享一个 `Switch`，`Disable()` 一键止言、`Enable()` 恢复；muted 单独计数不污染成功率 |
+| 突发流量 | `NewQueuedBot` 入队直返 + `WithInterval` 节流排干，队列适配器多实例负载均衡（见「削峰填谷」） |
 | 统计观测 | 进程内 `Stats()` 常开；`WithMetrics` 接 ClickHouse 后按 `bot_send_events` 聚合发送量/成功率 |
 | 落盘健康 | `chMetrics.FailedBatches()` 暴露被丢弃的批量，接入方对其监控告警 |
 | 故障隔离 | `WithBreaker` 连续失败快速熔断，避免对故障平台持续压测；多平台互不影响 |
@@ -311,6 +346,10 @@ func main() {
 | `Stats` | `Stats() *Stats` | 进程内统计（sent/error/muted/成功率） |
 | `NewMulti` | `NewMulti(bots ...*Bot) (*Multi, error)` | 多 Bot 广播器 |
 | `Multi.Send` | `Send(ctx, msg, targets...) ([][]*SendResult, error)` | 跨平台 × 多目标并发，结果 `results[bot][target]` |
+| `NewQueuedBot` | `NewQueuedBot(bot, queue) *QueuedBotBuilder` | 组装削峰门面（Builder 链式） |
+| `WithInterval` | `WithInterval(d time.Duration) *QueuedBotBuilder` | 消费节奏（默认 1s） |
+| `QueuedBot.Send` | `Send(ctx, msg, targets...) ([]*SendResult, error)` | 入队直返，`nil` 仅代表已入队 |
+| `QueuedBot.Run` | `Run(ctx) error` | 节流消费循环，阻塞直到 ctx 取消 |
 
 ## 🧰 模块一览
 
@@ -328,6 +367,10 @@ func main() {
 | 📊 进程内统计 | [stats.go](stats.go) | atomic sent/error/muted/成功率 | 始终可用 |
 | 📈 统计接口 | [metrics.go](metrics.go) | Metrics 接口 + SendStat + EmptyMetrics | 持久化扩展点 |
 | 📣 多 Bot 广播 | [multi.go](multi.go) | 跨平台 × 多目标并发扇出、聚合错误 | 多平台通知、批量告警 |
+| 🌊 队列 SPI | [queue.go](queue.go) | Queue / QueueTask 契约（平台无关） | 削峰填谷扩展点 |
+| 🌊 削峰门面 | [queued.go](queued.go) | QueuedBot 入队直返 + Interval 节流消费循环 | 突发流量削峰 |
+
+队列适配器为独立仓库，按需引入：[go-bot-queue-redis](https://github.com/kamalyes/go-bot-queue-redis)（Redis Stream）、[go-bot-queue-nats](https://github.com/kamalyes/go-bot-queue-nats)（NATS JetStream）。
 
 ### telegram/
 
