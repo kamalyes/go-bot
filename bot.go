@@ -2,7 +2,7 @@
 * @Author: kamalyes 501893067@qq.com
 * @Date: 2026-09-16 15:07:28
 * @LastEditors: kamalyes 501893067@qq.com
-* @LastEditTime: 2026-09-16 19:58:13
+* @LastEditTime: 2026-09-18 21:15:07
 * @FilePath: \go-bot\bot.go
 * @Description: Bot 统一门面，Builder 链式装配通用能力链
 *
@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
 	"time"
 
 	gologger "github.com/kamalyes/go-logger"
@@ -121,26 +122,54 @@ func (b *Bot) Stats() *Stats { return &b.stats }
 // Close 释放底层 adapter 的资源
 func (b *Bot) Close(ctx context.Context) error { return b.adapter.Close(ctx) }
 
-// SendText 发送一条纯文本消息（便捷形式）
-func (b *Bot) SendText(ctx context.Context, target Target, text string) (*SendResult, error) {
-	return b.Send(ctx, target, Text(text))
+// SendText 发送一条纯文本消息到一个或多个目标（便捷形式）
+func (b *Bot) SendText(ctx context.Context, text string, targets ...Target) ([]*SendResult, error) {
+	return b.Send(ctx, Text(text), targets...)
 }
 
-// SendMarkdown 发送一条 markdown 消息（便捷形式）
-func (b *Bot) SendMarkdown(ctx context.Context, target Target, title, content string) (*SendResult, error) {
-	return b.Send(ctx, target, Markdown(title, content))
+// SendMarkdown 发送一条 markdown 消息到一个或多个目标（便捷形式）
+func (b *Bot) SendMarkdown(ctx context.Context, title, content string, targets ...Target) ([]*SendResult, error) {
+	return b.Send(ctx, Markdown(title, content), targets...)
 }
 
-// SendImage 发送一条图片消息（便捷形式）
-func (b *Bot) SendImage(ctx context.Context, target Target, url string) (*SendResult, error) {
-	return b.Send(ctx, target, Image(url))
+// SendImage 发送一条图片消息到一个或多个目标（便捷形式）
+func (b *Bot) SendImage(ctx context.Context, url string, targets ...Target) ([]*SendResult, error) {
+	return b.Send(ctx, Image(url), targets...)
 }
 
-// Send 发送一条消息，是所有通用能力的收口：
-// 校验 → 静音 → 重试/熔断包裹 adapter.Send → 记录统计
-// 静音时返回 nil（消息被丢弃并计入 muted，与成功不可区分是刻意设计，
-// 调用方可用 Stats().TotalMuted 观测）
-func (b *Bot) Send(ctx context.Context, target Target, msg *Message) (*SendResult, error) {
+// Send 把一条消息发送到一个或多个目标，是所有通用能力的收口：
+// 单目标走快路径不引入 goroutine；多目标并发扇出，
+// 在途请求受 DefaultBatchConcurrency 限制，限流退避交给重试链消化
+// 每个目标独立走完整流水线（校验 → 静音 → 重试/熔断包裹 adapter.Send → 统计），
+// 结果按 targets 顺序返回，失败位置为 nil；错误用 errors.Join 聚合，全部成功时为 nil
+// 静音时目标返回 nil 结果且不计入聚合错误（消息被丢弃并计入 muted，
+// 调用方可用 Stats().TotalMuted 观测，与成功不可区分是刻意设计）
+func (b *Bot) Send(ctx context.Context, msg *Message, targets ...Target) ([]*SendResult, error) {
+	if len(targets) == 0 {
+		return nil, NewValidationError("Send", "targets are required")
+	}
+	if len(targets) == 1 {
+		res, err := b.sendOne(ctx, targets[0], msg)
+		return []*SendResult{res}, err
+	}
+
+	results := make([]*SendResult, len(targets))
+	errs := make([]error, len(targets))
+	sem := make(chan struct{}, min(len(targets), DefaultBatchConcurrency))
+	var wg sync.WaitGroup
+	for i, target := range targets {
+		wg.Go(func() {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			results[i], errs[i] = b.sendOne(ctx, target, msg)
+		})
+	}
+	wg.Wait()
+	return results, errors.Join(errs...)
+}
+
+// sendOne 是单目标的完整发送流水线：校验 → 静音 → 重试/熔断 → 统计
+func (b *Bot) sendOne(ctx context.Context, target Target, msg *Message) (*SendResult, error) {
 	start := time.Now()
 
 	if err := b.validate(target, msg); err != nil {

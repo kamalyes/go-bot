@@ -2,7 +2,7 @@
 * @Author: kamalyes 501893067@qq.com
 * @Date: 2026-09-15 08:23:17
 * @LastEditors: kamalyes 501893067@qq.com
-* @LastEditTime: 2026-09-15 09:02:58
+* @LastEditTime: 2026-09-18 21:02:18
 * @FilePath: \go-bot\constants.go
 * @Description: 平台常量与默认值定义
 *
@@ -42,6 +42,9 @@ const (
 	DefaultMetricsBatchSize = 500
 	// DefaultMetricsFlushInterval 是 ClickHouse 统计的默认批量落盘间隔
 	DefaultMetricsFlushInterval = 5 * time.Second
+	// DefaultBatchConcurrency 是 SendBatch 批量发送的并发上限
+	// 一次向大量目标投递时限制在途请求数，限流交给重试链消化
+	DefaultBatchConcurrency = 8
 )
 
 // GetDefaultHTTPTimeout 等默认值以函数形式暴露，便于测试与运行期统一调整
