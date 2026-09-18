@@ -5,11 +5,13 @@ go 1.25.0
 require (
 	github.com/kamalyes/go-logger v0.6.1
 	github.com/kamalyes/go-toolbox v0.16.3
+	github.com/mattn/go-runewidth v0.0.30
 	gorm.io/gorm v1.31.2
 )
 
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/clipperhouse/uax29/v2 v2.2.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/kamalyes/go-argus v0.3.1 // indirect
