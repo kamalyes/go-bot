@@ -4,7 +4,7 @@
 * @LastEditors: kamalyes 501893067@qq.com
 * @LastEditTime: 2026-09-18 22:56:36
 * @FilePath: \go-bot\telegram\events_test.go
-* @Description: Telegram 事件接收测试：getUpdates 解码、游标参数与会话记忆
+* @Description: Telegram 事件接收测试：getUpdates 解码、游标参数、会话记忆与成员状态变化
 *
 * Copyright (c) 2026 by kamalyes, All Rights Reserved.
  */
@@ -152,5 +152,81 @@ func TestGetEventsPropagatesError(t *testing.T) {
 	var e *gobot.Error
 	if !errors.As(err, &e) || e.Kind != gobot.KindPlatform || e.Code != 409 {
 		t.Fatalf("GetEvents() 错误 = %v, 期望 platform/409", err)
+	}
+}
+
+// TestGetEventsDecodesMyChatMember 验证机器人成员状态变化事件完整解码并实时维护已知列表：
+// 加入记入会话、被移出移除会话、群内提权刷新会话
+func TestGetEventsDecodesMyChatMember(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		oldStatus string
+		newStatus string
+		inList    bool
+	}{
+		{"被拉入群", "left", "member", true},
+		{"群内提权", "member", "administrator", true},
+		{"被移出群", "member", "kicked", false},
+		{"主动退群", "member", "left", false},
+	} {
+		adapter := newTestAdapter(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"ok":true,"result":[{"update_id":2001,"my_chat_member":{` +
+				`"chat":{"id":-100777,"type":"supergroup","title":"告警群"},` +
+				`"from":{"id":42,"first_name":"小明","username":"xiaoming"},"date":1758265000,` +
+				`"old_chat_member":{"status":"` + tc.oldStatus + `","user":{"id":999,"is_bot":true}},` +
+				`"new_chat_member":{"status":"` + tc.newStatus + `","user":{"id":999,"is_bot":true}}}}]}`))
+		})
+		events, err := adapter.GetEvents(context.Background(), EventOptions{})
+		if err != nil {
+			t.Fatalf("%s: GetEvents() error = %v", tc.name, err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("%s: events 数量 = %d, 期望 1", tc.name, len(events))
+		}
+		event := events[0]
+		if event.MyChatMember == nil || event.Message != nil {
+			t.Fatalf("%s: event = %+v, 期望仅携带 MyChatMember", tc.name, event)
+		}
+		update := event.MyChatMember
+		if update.Chat.ID != "-100777" || update.Chat.Type != ChatTypeSuperGroup || update.Chat.Title != "告警群" {
+			t.Fatalf("%s: 会话快照 = %+v, 期望 -100777/supergroup/告警群", tc.name, update.Chat)
+		}
+		if update.From == nil || update.From.ID != 42 || update.Date != 1758265000 {
+			t.Fatalf("%s: 变化元数据 = %+v, 期望操作者与时间完整", tc.name, update)
+		}
+		if update.OldStatus != ChatMemberStatus(tc.oldStatus) || update.NewStatus != ChatMemberStatus(tc.newStatus) {
+			t.Fatalf("%s: 状态变化 = %s -> %s, 期望 %s -> %s",
+				tc.name, update.OldStatus, update.NewStatus, tc.oldStatus, tc.newStatus)
+		}
+		known := adapter.ListChats()
+		if tc.inList && (len(known) != 1 || known[0].ID != "-100777") {
+			t.Fatalf("%s: ListChats() = %+v, 期望保留 -100777", tc.name, known)
+		}
+		if !tc.inList && len(known) != 0 {
+			t.Fatalf("%s: ListChats() = %+v, 期望已移除 -100777", tc.name, known)
+		}
+	}
+}
+
+// TestChatMemberUpdatePredicates 验证成员状态判断语义
+func TestChatMemberUpdatePredicates(t *testing.T) {
+	for _, tc := range []struct {
+		oldStatus, newStatus  ChatMemberStatus
+		inGroup, joined, left bool
+	}{
+		{ChatMemberStatusLeft, ChatMemberStatusMember, true, true, false},
+		{ChatMemberStatusKicked, ChatMemberStatusAdministrator, true, true, false},
+		{ChatMemberStatusMember, ChatMemberStatusAdministrator, true, false, false},
+		{ChatMemberStatusMember, ChatMemberStatusRestricted, true, false, false},
+		{ChatMemberStatusMember, ChatMemberStatusKicked, false, false, true},
+		{ChatMemberStatusAdministrator, ChatMemberStatusLeft, false, false, true},
+	} {
+		update := ChatMemberUpdate{OldStatus: tc.oldStatus, NewStatus: tc.newStatus}
+		if update.InGroup() != tc.inGroup || update.Joined() != tc.joined || update.Left() != tc.left {
+			t.Errorf("%s -> %s: InGroup/Joined/Left = %v/%v/%v, 期望 %v/%v/%v",
+				tc.oldStatus, tc.newStatus,
+				update.InGroup(), update.Joined(), update.Left(),
+				tc.inGroup, tc.joined, tc.left)
+		}
 	}
 }

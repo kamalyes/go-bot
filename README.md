@@ -33,7 +33,7 @@
 - 🎯 **链式构造** - `gobot.Text("...").AtAll()` Builder 风格，对齐 go-logger / go-cachex 使用习惯
 - 📣 **多平台广播** - `NewMulti(bot1, bot2)` 跨平台 × 多目标并发扇出、聚合错误
 - 🌊 **削峰填谷** - `NewQueuedBot(bot, queue)` 入队直返、按 `Interval` 节流消费，配 [go-bot-queue-redis](https://github.com/kamalyes/go-bot-queue-redis) / [go-bot-queue-nats](https://github.com/kamalyes/go-bot-queue-nats) 独立队列库实现多实例负载均衡
-- 💬 **TG 群组能力** - `ListChats` / `GetChat` / `LeaveChat` 群管理基础能力，`GetEvents` 长轮询收事件
+- 💬 **TG 群组能力** - `ListChats` / `GetChat` / `LeaveChat` 群管理基础能力，`GetEvents` 长轮询收事件，`RunEventLoop` 常驻事件循环驱动群组实时感知
 - 🧱 **业务与 SDK 分离** - 只提供平台基础能力，绑定/解绑/订阅等业务语义由调用方实现
 
 ## 🏗️ 架构概览
@@ -419,7 +419,8 @@ func main() {
 | [markdown.go](telegram/markdown.go) | 通用 markdown 转 Telegram HTML 子集 |
 | [api.go](telegram/api.go) | HTTP 基础设施（callAPI 泛型调用、429 退避、可重试判定） |
 | [chat.go](telegram/chat.go) | 群组能力（ListChats/GetChat/LeaveChat，会话自动积累） |
-| [events.go](telegram/events.go) | 事件接收（GetEvents 长轮询 + Event/ChatMessage 模型） |
+| [events.go](telegram/events.go) | 事件接收（GetEvents 长轮询 + Event/ChatMessage/ChatMemberUpdate 模型，成员状态变化实时维护已知会话） |
+| [watch.go](telegram/watch.go) | 常驻事件循环（RunEventLoop 自动推进游标、退避重试，跳过历史积压） |
 
 ### lark/
 
@@ -479,7 +480,7 @@ func main() {
 | 限流响应 | 429 + retry_after | 业务码 11232，转 Retryable | 20 条/分钟超限封禁 10 分钟，不可重试 | 20 条/分钟超限封禁 10 分钟，不可重试 | 免费额度每日 5 条，不可重试 |
 | 路由 | 按 Target.ID 投递 | 固定投递机器人所在会话 | 固定投递机器人所在群 | 固定投递机器人所在群 | 固定投递 SendKey 绑定者 |
 | 群组能力 | ListChats / GetChat / LeaveChat | 无 | 无 | 无 | 无 |
-| 事件 | GetEvents 长轮询 | 无（单向推送） | 无（单向推送） | 无（单向推送） | 无（单向推送） |
+| 事件 | GetEvents 长轮询 + RunEventLoop 常驻循环（my_chat_member 群组实时感知） | 无（单向推送） | 无（单向推送） | 无（单向推送） | 无（单向推送） |
 | 约束 | bot 无法主动加群，只能被拉入 | 请求体上限 20KB（本地拦截）、签名 1 小时内有效 | 请求体上限 20KB（本地拦截）、安全设置关键词/IP 白名单由平台校验 | text 2048B / markdown 4096B / 图片 base64 2MB（均本地拦截） | 表单提交、无 @ 概念，超长内容由平台截断 |
 
 > 💡 新平台接入：实现 `Adapter` SPI 三方法即可，核心不动（`wecom/`、`serverchan/` 即最简范例）
