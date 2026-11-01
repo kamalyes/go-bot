@@ -4,7 +4,7 @@ go 1.25.0
 
 require (
 	github.com/kamalyes/go-logger v0.8.0
-	github.com/kamalyes/go-toolbox v0.18.1
+	github.com/kamalyes/go-toolbox v0.19.0
 	github.com/mattn/go-runewidth v0.0.30
 	gorm.io/gorm v1.31.2
 )
