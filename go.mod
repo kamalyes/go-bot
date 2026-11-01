@@ -3,7 +3,7 @@ module github.com/kamalyes/go-bot
 go 1.25.0
 
 require (
-	github.com/kamalyes/go-logger v0.9.0
+	github.com/kamalyes/go-logger v0.10.0
 	github.com/kamalyes/go-toolbox v0.19.2
 	github.com/mattn/go-runewidth v0.0.30
 	gorm.io/gorm v1.31.2
