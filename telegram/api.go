@@ -7,7 +7,7 @@
 * @Description: Telegram Bot API 调用基础设施与统一响应解码
 *
 * Copyright (c) 2026 by kamalyes, All Rights Reserved.
-*/
+ */
 
 package telegram
 
@@ -24,7 +24,7 @@ import (
 // 把传输/HTTP/平台/解码四类失败分别映射为结构化 *gobot.Error
 func callAPI[T any](a *Adapter, ctx context.Context, op, method string, payload any) (T, error) {
 	var zero T
-	resp, err := a.client.Post(a.cfg.APIBase+"/bot"+a.cfg.Token+"/"+method).
+	resp, err := a.client.Post(a.cfg.APIBase + "/bot" + a.cfg.Token + "/" + method).
 		WithContext(ctx).
 		SetBodyJSON(payload).
 		Send()

@@ -40,11 +40,11 @@ func TestStatsCountersIndependent(t *testing.T) {
 // TestStatsSuccessRate 验证成功率计算与静音不污染样本
 func TestStatsSuccessRate(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		sent       int64
-		errs       int64
-		muted      int64
-		wantRate   float64
+		name     string
+		sent     int64
+		errs     int64
+		muted    int64
+		wantRate float64
 	}{
 		{"无样本返回零", 0, 0, 0, 0},
 		{"部分成功", 3, 1, 0, 0.75},

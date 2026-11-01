@@ -82,9 +82,9 @@ func TestNewValidationError(t *testing.T) {
 // TestNewTransportError 验证取消类错误不可重试、其余传输错误可重试
 func TestNewTransportError(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		err        error
-		retryable  bool
+		name      string
+		err       error
+		retryable bool
 	}{
 		{"context canceled", context.Canceled, false},
 		{"deadline exceeded", context.DeadlineExceeded, false},
@@ -108,8 +108,8 @@ func TestNewTransportError(t *testing.T) {
 // TestNewHTTPError 验证 HTTP 状态码驱动的可重试判定与字段填充
 func TestNewHTTPError(t *testing.T) {
 	for _, tc := range []struct {
-		status     int
-		retryable  bool
+		status    int
+		retryable bool
 	}{
 		{http.StatusRequestTimeout, true},
 		{http.StatusTooEarly, true},
